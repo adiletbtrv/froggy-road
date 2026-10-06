@@ -9,7 +9,10 @@ const JUMP_DUR = 0.12, JUMP_H = 0.45;
 const WRAP_BUF = 6, FADE_DIST = 3.5;
 const GROUND_W = 2 * (HALF_W + WRAP_BUF) + 4;
 const MIN_VIEW_W = 17, MIN_VIEW_H = 13;
-const FROG_REST_Y = 0.15;
+// Высота центра тела лягушки над поверхностью (половина высоты тела = 0.34/2)
+const FROG_REST_Y = 0.17;
+// Высота поверхности бревна над плоскостью полосы (body.y=0.04, h=0.24 → top=0.16)
+const LOG_SURFACE_Y = 0.16;
 
 /* Смещение камеры: -X влево, +Y вверх, -Z сзади */
 const CAM_OFF = new THREE.Vector3(-5, 11, -3);
@@ -91,6 +94,7 @@ class Frog {
         this.eyes = [];
         this.combo = 0;
         this.lastJumpTime = 0;
+        this.onLog = false;
         this._build();
         this.group.position.set(0, FROG_REST_Y, 0);
         scene.add(this.group);
@@ -136,15 +140,19 @@ class Frog {
 
     tryMove(dx, dz) {
         if (this.moving || !this.alive || gameState !== 'playing') return false;
-        this.gx = Math.round(this.group.position.x);
-        this.driftX = 0;
-        const nx = this.gx + dx, nz = this.gz + dz;
-        if (nx < -HALF_W || nx > HALF_W) return false;
+        // При движении вдоль бревна стартовая X берётся из текущей мировой позиции,
+        // чтобы анимация прыжка начиналась точно там, где стоит лягушка.
+        this.sx = this.group.position.x;
+        this.sz = this.gz;
+        // После прыжка лягушка должна встать на целую клетку от текущей gx.
+        // Обновляем gx так, чтобы он совпадал с округлённой позицией + шаг.
+        this.gx = Math.round(this.group.position.x) + dx;
+        if (this.gx < -HALF_W || this.gx > HALF_W) return false;
+        const nz = this.gz + dz;
         const tl = lanes[nz];
-        if (tl && tl.type === 'grass' && tl.blocked.has(nx)) return false;
-
-        this.sx = this.gx; this.sz = this.gz;
-        this.gx = nx; this.gz = nz;
+        if (tl && tl.type === 'grass' && tl.blocked.has(this.gx)) return false;
+        this.gz = nz;
+        this.driftX = 0;
         this.moving = true; this.prog = 0;
 
         // Система комбо — учитывается только при продвижении вперёд на новую клетку (gz > maxZ).
@@ -200,10 +208,16 @@ class Frog {
             this.prog += dt / JUMP_DUR;
             if (this.prog >= 1) { this.prog = 1; this.moving = false; }
             const t = this.prog;
+            // Ease-in-out квадратичная интерполяция
             const e = t < .5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
             this.group.position.x = this.sx + (this.gx - this.sx) * e;
             this.group.position.z = this.sz + (this.gz - this.sz) * e;
-            this.group.position.y = FROG_REST_Y + Math.sin(t * Math.PI) * JUMP_H;
+            // Высота дуги прыжка: стартует и заканчивается на поверхности назначения
+            const destLane = lanes[this.gz];
+            const destY = (destLane && destLane.type === 'river') ? LOG_SURFACE_Y + FROG_REST_Y : FROG_REST_Y;
+            const srcLane = lanes[this.sz];
+            const srcY = (srcLane && srcLane.type === 'river') ? LOG_SURFACE_Y + FROG_REST_Y : FROG_REST_Y;
+            this.group.position.y = srcY + (destY - srcY) * e + Math.sin(t * Math.PI) * JUMP_H;
             const jp = Math.sin(t * Math.PI);
             this.group.scale.set(1 - jp * .13, 1 + jp * .32, 1 - jp * .13);
         } else {
@@ -216,7 +230,7 @@ class Frog {
                 let onLog = false;
                 const fx = this.group.position.x;
                 for (const lg of lane.logs) {
-                    if (fx > lg.x - lg.hw - .15 && fx < lg.x + lg.hw + .15) {
+                    if (fx > lg.x - lg.hw - .18 && fx < lg.x + lg.hw + .18) {
                         onLog = true;
                         this.driftX += lane.spd * lane.dir * dt;
                         this.group.position.x = this.gx + this.driftX;
@@ -225,6 +239,9 @@ class Frog {
                 }
                 if (!onLog) die('water');
                 if (Math.abs(this.group.position.x) > HALF_W + 1) die('water');
+                // Лягушка стоит поверх бревна
+                this.group.position.y = LOG_SURFACE_Y + FROG_REST_Y
+                    + Math.sin(this.idleT * 2.5) * .008;
             } else {
                 this.group.position.x += (this.gx - this.group.position.x) * .18;
                 this.group.position.z = this.gz;
@@ -235,6 +252,9 @@ class Frog {
         // Обновление позиции круглой тени
         blobShadow.position.x = this.group.position.x;
         blobShadow.position.z = this.group.position.z;
+        // Тень всегда на поверхности (земля или бревно)
+        const shadowLane = lanes[this.gz];
+        blobShadow.position.y = (shadowLane && shadowLane.type === 'river') ? LOG_SURFACE_Y + 0.01 : 0.02;
     }
 
     setEyeGlow(v) { this.eyes.forEach(e => { e.material.emissive.setRGB(v, v, v * .8); }); }
@@ -329,22 +349,25 @@ function buildCar(lane, x) {
 
     g.position.set(x, 0, 0);
     lane.grp.add(g);
-    return { mesh: g, x, hw: tp.l / 2 };
+    return { mesh: g, x, hw: tp.l / 2, baseY: 0 };
 }
 
 function buildLog(lane, x, len) {
     const g = new THREE.Group();
+    // Бревно: высота 0.24, центр на y=0 → верхняя грань на y=+0.12.
+    // Позиция группы y=0.04 → верхняя грань в мировых координатах = 0.16 = LOG_SURFACE_Y.
     const body = new THREE.Mesh(new THREE.BoxGeometry(len, .24, .68), M.log);
-    body.position.y = .04; body.castShadow = true; body.receiveShadow = true; g.add(body);
+    body.position.y = 0; body.castShadow = true; body.receiveShadow = true; g.add(body);
 
     [-len / 2, len / 2].forEach(ex => {
         const c = new THREE.Mesh(new THREE.BoxGeometry(.18, .22, .63), M.logDk);
-        c.position.set(ex + (ex > 0 ? -.09 : .09), .04, 0); g.add(c);
+        c.position.set(ex + (ex > 0 ? -.09 : .09), 0, 0); g.add(c);
     });
 
-    g.position.set(x, 0, 0);
+    // Группа смещена так, чтобы верхняя грань была на высоте LOG_SURFACE_Y (0.16)
+    g.position.set(x, LOG_SURFACE_Y - 0.12, 0);
     lane.grp.add(g);
-    return { mesh: g, x, hw: len / 2 };
+    return { mesh: g, x, hw: len / 2, baseY: LOG_SURFACE_Y - 0.12 };
 }
 
 // ============================================================
@@ -698,7 +721,8 @@ function applyEdgeFade(obj, x, hw, wMin, wMax) {
     f = Math.max(0, Math.min(1, f));
     const s = Math.max(0.001, f);
     obj.mesh.scale.y = s;
-    obj.mesh.position.y = (1 - f) * -0.5; // погружение под землю при сжатии
+    // Смещаем группу вниз относительно базового Y объекта
+    obj.mesh.position.y = obj.baseY + (1 - f) * -0.5;
 }
 
 function updateLanes(dt) {
@@ -772,9 +796,11 @@ function init() {
 
     renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
     renderer.setSize(window.innerWidth, window.innerHeight);
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    // Ограничение DPR до 1.5 на мобильных: выше не даёт заметного улучшения,
+    // но режет fillrate и быстро садит батарею.
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
     renderer.shadowMap.enabled = true;
-    renderer.shadowMap.type = THREE.BasicShadowMap;
+    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     document.body.appendChild(renderer.domElement);
 
     ambLight = new THREE.AmbientLight(0xffffff, .5);
@@ -784,11 +810,13 @@ function init() {
     dirLight.position.set(-4, 16, 4);
     dirLight.castShadow = true;
     // Оптимизированный усечённый конус теней для стабильного FPS
-    const ss = 15; 
+    const ss = 13;
     dirLight.shadow.camera.left = -ss; dirLight.shadow.camera.right = ss;
     dirLight.shadow.camera.top = ss; dirLight.shadow.camera.bottom = -ss;
-    dirLight.shadow.camera.near = 1; dirLight.shadow.camera.far = 50;
-    dirLight.shadow.mapSize.width = 2048; dirLight.shadow.mapSize.height = 2048;
+    dirLight.shadow.camera.near = 1; dirLight.shadow.camera.far = 45;
+    // 1024 вместо 2048 — разница почти незаметна при изометрии,
+    // но вдвое снижает нагрузку на GPU при прорисовке теневой карты.
+    dirLight.shadow.mapSize.width = 1024; dirLight.shadow.mapSize.height = 1024;
     scene.add(dirLight);
     scene.add(dirLight.target);
 
