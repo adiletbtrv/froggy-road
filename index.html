@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Froggy Road</title>
+    <link rel="stylesheet" href="style.css">
+    <link href="https://fonts.googleapis.com/css2?family=Bungee&display=swap" rel="stylesheet">
+</head>
+<body>
+    <div id="ui">
+        <div id="top-bar">
+            <div id="score" aria-live="polite">0</div>
+            <button id="mute-btn" aria-label="Toggle sound">
+                <svg id="sound-on" width="22" height="22" viewBox="0 0 24 24" fill="#fff">
+                    <path d="M3 9v6h4l5 5V4L7 9H3z"/>
+                    <path d="M16.5 12A4.5 4.5 0 0 0 14 8v8a4.5 4.5 0 0 0 2.5-4z"/>
+                    <path d="M14 3.23v2.06a7 7 0 0 1 0 13.42v2.06A9 9 0 0 0 14 3.23z"/>
+                </svg>
+                <svg id="sound-off" width="22" height="22" viewBox="0 0 24 24" fill="#fff" style="display:none">
+                    <path d="M3 9v6h4l5 5V4L7 9H3z"/>
+                    <path d="M18.5 12l3.5 3.5-1.41 1.41L17.09 13.5l-3.5 3.41-1.41-1.41 3.5-3.5-3.5-3.5 1.41-1.41 3.5 3.5 3.5-3.41L22 8.5z"/>
+                </svg>
+            </button>
+        </div>
+
+        <div id="combo-display"></div>
+
+        <!-- ГЛАВНОЕ МЕНЮ -->
+        <div id="main-menu" class="overlay show">
+            <h1>FROGGY ROAD</h1>
+            <div id="menu-high-score">Best Score: 0</div>
+            <button id="play-btn" class="primary-btn">PLAY</button>
+            <div id="hint" class="hint">WASD / Arrows to hop</div>
+        </div>
+
+        <!-- ЭКРАН СМЕРТИ -->
+        <div id="overlay" class="overlay">
+            <h2>GAME OVER</h2>
+            <p>Score: <span id="final-score">0</span></p>
+            <p>Best: <span id="go-high-score">0</span></p>
+            <button id="restart-btn" class="primary-btn">RESTART</button>
+        </div>
+
+        <div id="dpad">
+            <button class="dpad-btn" id="dpad-up" aria-label="Move forward">&#9650;</button>
+            <button class="dpad-btn" id="dpad-left" aria-label="Move left">&#9664;</button>
+            <button class="dpad-btn" id="dpad-right" aria-label="Move right">&#9654;</button>
+            <button class="dpad-btn" id="dpad-down" aria-label="Move backward">&#9660;</button>
+        </div>
+    </div>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="audio.js"></script>
+    <script src="game.js"></script>
+</body>
+</html>
