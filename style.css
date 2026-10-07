@@ -1,80 +1,255 @@
 *{margin:0;padding:0;box-sizing:border-box}
-body{overflow:hidden;background:#1a1a2e;font-family:'Bungee',sans-serif;touch-action:none;-webkit-user-select:none;user-select:none}
+body{
+    overflow:hidden;
+    background:#1a1a2e;
+    font-family:'Nunito',system-ui,-apple-system,sans-serif;
+    font-weight:700;
+    touch-action:none;
+    -webkit-user-select:none;
+    user-select:none;
+}
 canvas{display:block}
 
 #ui{position:absolute;inset:0;pointer-events:none}
-#top-bar{position:absolute;top:12px;left:0;width:100%;display:flex;justify-content:space-between;padding:0 12px;z-index:10}
+#top-bar{
+    position:absolute;
+    top:16px;
+    left:0;
+    width:100%;
+    display:flex;
+    justify-content:space-between;
+    align-items:center;
+    padding:0 16px;
+    z-index:10;
+}
 
+/* Счёт: скруглённая "таблетка" с мягкой подложкой для идеального контраста днём и ночью */
 #score{
-    font-size:clamp(28px,6vw,48px);color:#fff;
-    text-shadow:2px 2px 0 #000,4px 4px 0 rgba(0,0,0,.3);letter-spacing:2px;
-    transition:transform .15s
+    font-family:'Nunito',system-ui,-apple-system,sans-serif;
+    font-size:clamp(28px,6vw,44px);
+    font-weight:900;
+    color:#ffffff;
+    background:rgba(0,0,0,0.45);
+    backdrop-filter:blur(8px);
+    -webkit-backdrop-filter:blur(8px);
+    border:2.5px solid rgba(255,255,255,0.22);
+    border-radius:999px;
+    padding:4px 22px;
+    min-width:76px;
+    text-align:center;
+    letter-spacing:1px;
+    box-shadow:0 6px 16px rgba(0,0,0,0.3);
+    text-shadow:0 2px 4px rgba(0,0,0,0.5);
+    display:inline-flex;
+    align-items:center;
+    justify-content:center;
+    transform-origin:center;
+    transition:transform .12s cubic-bezier(0.34,1.56,0.64,1);
 }
-#score.pop{animation:pop .15s ease-out}
-@keyframes pop{50%{transform:scale(1.3)}}
+#score.pop{animation:pop .18s cubic-bezier(0.34,1.56,0.64,1)}
+@keyframes pop{50%{transform:scale(1.22)}}
 
+/* Всплывающий комбо-тост */
 #combo-display{
-    position:absolute;top:60px;left:12px;
-    font-size:18px;color:#FFD700;text-shadow:2px 2px 0 #000;
-    opacity:0;transition:opacity .2s;pointer-events:none
+    position:absolute;
+    top:74px;
+    left:16px;
+    font-family:'Nunito',sans-serif;
+    font-size:15px;
+    font-weight:900;
+    color:#FFD700;
+    background:rgba(20,20,30,0.6);
+    backdrop-filter:blur(6px);
+    -webkit-backdrop-filter:blur(6px);
+    border:1.5px solid #FFD700;
+    border-radius:999px;
+    padding:5px 14px;
+    box-shadow:0 4px 14px rgba(255,215,0,0.25);
+    text-shadow:0 1px 2px rgba(0,0,0,0.8);
+    opacity:0;
+    transition:opacity .2s;
+    pointer-events:none;
 }
-#combo-display.show{opacity:1;animation:comboPulse .5s}
-@keyframes comboPulse{0%{transform:scale(1.2)}100%{transform:scale(1)}}
+#combo-display.show{opacity:1;animation:comboPulse .4s cubic-bezier(0.34,1.56,0.64,1)}
+@keyframes comboPulse{0%{transform:scale(0.85)}60%{transform:scale(1.15)}100%{transform:scale(1)}}
 
+/* Кнопка включения/выключения звука */
 #mute-btn{
-    width:42px;height:42px;border-radius:10px;border:none;cursor:pointer;pointer-events:auto;
-    background:rgba(0,0,0,.35);display:flex;align-items:center;justify-content:center;
-    transition:background .2s
+    width:46px;
+    height:46px;
+    border-radius:14px;
+    border:2.5px solid rgba(255,255,255,0.22);
+    cursor:pointer;
+    pointer-events:auto;
+    background:rgba(0,0,0,0.45);
+    backdrop-filter:blur(8px);
+    -webkit-backdrop-filter:blur(8px);
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    box-shadow:0 6px 16px rgba(0,0,0,0.25);
+    transition:background .2s,transform .12s cubic-bezier(0.34,1.56,0.64,1);
 }
-#mute-btn:hover{background:rgba(0,0,0,.6)}
+#mute-btn:hover{background:rgba(0,0,0,0.7);transform:scale(1.06)}
 #mute-btn:active{transform:scale(.92)}
-#mute-btn:focus-visible{outline:3px solid #4CAF50}
+#mute-btn:focus-visible{outline:3px solid #4CAF50;outline-offset:2px}
 
+/* Меню и оверлеи */
 .overlay{
-    display:none;position:absolute;inset:0;pointer-events:auto;
-    background:rgba(0,0,0,.6);backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);
-    flex-direction:column;align-items:center;justify-content:center;z-index:30
+    display:none;
+    position:absolute;
+    inset:0;
+    pointer-events:auto;
+    background:rgba(12,16,28,0.72);
+    backdrop-filter:blur(10px);
+    -webkit-backdrop-filter:blur(10px);
+    flex-direction:column;
+    align-items:center;
+    justify-content:center;
+    z-index:30;
+    padding:20px;
 }
-.overlay.show{display:flex;animation:fadeIn .3s}
-@keyframes fadeIn{from{opacity:0}to{opacity:1}}
+.overlay.show{display:flex;animation:fadeIn .25s ease-out}
+@keyframes fadeIn{from{opacity:0;transform:scale(0.98)}to{opacity:1;transform:scale(1)}}
 
-#main-menu h1{font-size:clamp(40px,9vw,72px);color:#4CAF50;text-shadow:4px 4px 0 #000;margin-bottom:8px;animation:float 3s ease-in-out infinite}
+#main-menu h1{
+    font-family:'Fredoka',cursive,sans-serif;
+    font-size:clamp(44px,9vw,80px);
+    font-weight:700;
+    color:#4CAF50;
+    text-shadow:0 6px 0 #2E7D32,0 12px 24px rgba(0,0,0,0.5);
+    letter-spacing:2px;
+    margin-bottom:12px;
+    text-align:center;
+    animation:float 3s ease-in-out infinite;
+}
 @keyframes float{50%{transform:translateY(-8px)}}
 
-#overlay h2{font-size:clamp(36px,8vw,60px);color:#FF1744;text-shadow:3px 3px 0 #000;margin-bottom:6px}
-#overlay p{font-size:clamp(20px,4vw,28px);color:#eee;text-shadow:2px 2px 0 #000;margin-bottom:8px}
-
-#menu-high-score{font-size:18px;color:#FFD700;margin-bottom:24px;text-shadow:1px 1px 0 #000}
-
-.primary-btn{
-    font-size:clamp(18px,4vw,24px);padding:12px 48px;background:#4CAF50;color:#fff;border:none;
-    border-radius:12px;cursor:pointer;font-family:'Bungee',sans-serif;letter-spacing:1px;
-    transition:background .2s,transform .1s;pointer-events:auto;margin-top:10px
+#overlay h2{
+    font-family:'Fredoka',cursive,sans-serif;
+    font-size:clamp(40px,8vw,70px);
+    font-weight:700;
+    color:#FF1744;
+    text-shadow:0 6px 0 #B71C1C,0 12px 24px rgba(0,0,0,0.5);
+    letter-spacing:2px;
+    margin-bottom:12px;
+    text-align:center;
 }
-.primary-btn:hover{background:#388E3C;transform:scale(1.05)}
-.primary-btn:active{transform:scale(.95)}
-.primary-btn:focus-visible{outline:3px solid #FFF}
+#overlay p{
+    font-size:clamp(20px,4.5vw,28px);
+    font-weight:800;
+    color:#ffffff;
+    background:rgba(255,255,255,0.08);
+    border:1.5px solid rgba(255,255,255,0.14);
+    border-radius:14px;
+    padding:8px 24px;
+    margin:5px 0;
+    min-width:200px;
+    text-align:center;
+    box-shadow:0 4px 12px rgba(0,0,0,0.2);
+}
 
-#dpad{display:none;position:absolute;bottom:20px;left:20px;width:160px;height:160px;pointer-events:auto;z-index:20}
+#menu-high-score{
+    font-size:19px;
+    font-weight:800;
+    color:#FFD700;
+    background:rgba(255,215,0,0.14);
+    border:1.5px solid rgba(255,215,0,0.35);
+    border-radius:999px;
+    padding:6px 20px;
+    margin-bottom:28px;
+    box-shadow:0 4px 12px rgba(255,215,0,0.15);
+}
+
+/* Главные кнопки (сочные с 3D-нажатием в стиле аркад) */
+.primary-btn{
+    font-family:'Fredoka',cursive,sans-serif;
+    font-size:clamp(20px,4.5vw,26px);
+    font-weight:600;
+    letter-spacing:1px;
+    padding:14px 52px;
+    min-width:190px;
+    min-height:52px;
+    background:#4CAF50;
+    color:#ffffff;
+    border:none;
+    border-radius:20px;
+    cursor:pointer;
+    box-shadow:0 6px 0 #2E7D32,0 12px 22px rgba(0,0,0,0.35);
+    transition:background .15s,transform .1s cubic-bezier(0.34,1.56,0.64,1),box-shadow .1s;
+    pointer-events:auto;
+    margin-top:16px;
+    text-shadow:0 2px 4px rgba(0,0,0,0.3);
+}
+.primary-btn:hover{
+    background:#43A047;
+    transform:translateY(-2px);
+    box-shadow:0 8px 0 #2E7D32,0 16px 26px rgba(0,0,0,0.4);
+}
+.primary-btn:active{
+    transform:translateY(4px);
+    box-shadow:0 2px 0 #2E7D32,0 4px 10px rgba(0,0,0,0.3);
+}
+.primary-btn:focus-visible{outline:3px solid #FFF;outline-offset:3px}
+
+/* D-Pad (удобные скруглённые полупрозрачные кнопки с хорошей тактильностью) */
+#dpad{
+    display:none;
+    position:absolute;
+    bottom:24px;
+    left:24px;
+    width:168px;
+    height:168px;
+    pointer-events:auto;
+    z-index:20;
+}
 #dpad.show{display:block}
 .dpad-btn{
-    position:absolute;width:52px;height:52px;border:none;border-radius:12px;
-    background:rgba(255,255,255,.18);color:#fff;font-size:20px;cursor:pointer;
-    backdrop-filter:blur(3px);-webkit-backdrop-filter:blur(3px);
-    display:flex;align-items:center;justify-content:center;
-    transition:background .1s,transform .05s
+    position:absolute;
+    width:54px;
+    height:54px;
+    border:2px solid rgba(255,255,255,0.3);
+    border-radius:18px;
+    background:rgba(255,255,255,0.22);
+    color:#ffffff;
+    font-size:22px;
+    cursor:pointer;
+    backdrop-filter:blur(8px);
+    -webkit-backdrop-filter:blur(8px);
+    box-shadow:0 4px 14px rgba(0,0,0,0.25);
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    transition:background .1s,transform .06s ease,box-shadow .06s ease;
 }
-.dpad-btn:active{background:rgba(255,255,255,.4);transform:scale(.9)}
-#dpad-up{left:54px;top:0}
-#dpad-down{left:54px;bottom:0}
-#dpad-left{left:0;top:54px}
-#dpad-right{right:0;top:54px}
+.dpad-btn:hover{background:rgba(255,255,255,0.32)}
+.dpad-btn:active{
+    background:rgba(255,255,255,0.5);
+    transform:scale(0.92);
+    box-shadow:0 2px 6px rgba(0,0,0,0.2);
+}
+#dpad-up{left:57px;top:0}
+#dpad-down{left:57px;bottom:0}
+#dpad-left{left:0;top:57px}
+#dpad-right{right:0;top:57px}
 
-.hint{margin-top:24px;color:rgba(255,255,255,.6);font-size:14px;letter-spacing:1px}
+.hint{
+    margin-top:24px;
+    color:rgba(255,255,255,0.75);
+    background:rgba(0,0,0,0.35);
+    border:1px solid rgba(255,255,255,0.12);
+    border-radius:999px;
+    padding:6px 18px;
+    font-size:14px;
+    letter-spacing:0.5px;
+    font-weight:700;
+}
 
-@media(max-height:500px){
-    #dpad{width:120px;height:120px;bottom:10px;left:10px}
-    .dpad-btn{width:40px;height:40px;font-size:16px;border-radius:8px}
-    #dpad-up{left:40px;top:0} #dpad-down{left:40px;bottom:0}
-    #dpad-left{left:0;top:40px} #dpad-right{right:0;top:40px}
+@media(max-height:520px){
+    #dpad{width:128px;height:128px;bottom:12px;left:12px}
+    .dpad-btn{width:42px;height:42px;font-size:18px;border-radius:12px}
+    #dpad-up{left:43px;top:0}
+    #dpad-down{left:43px;bottom:0}
+    #dpad-left{left:0;top:43px}
+    #dpad-right{right:0;top:43px}
 }
