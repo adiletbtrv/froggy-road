@@ -164,7 +164,7 @@ Atmospheric lighting transitions smoothly across a 120-second continuous cycle g
 | **Projection Model** | **OrthographicCamera** | *Native* | Parallax-free isometric projection with dynamic aspect-ratio clamping |
 | **Audio Synthesis** | **Web Audio API** | *Native* | Real-time chiptune music synthesis and algorithmic sound effects |
 | **Core Language** | **Vanilla JavaScript** | `ES6+` | Object-oriented game loop, state management, procedural generation |
-| **Styling & Typography** | **CSS3 & Google Fonts** | *Bungee* | Responsive arcade HUD, glassmorphism overlays, touch D-Pad controls |
+| **Styling & Typography** | **CSS3 & Google Fonts** | *Fredoka, Nunito* | Responsive arcade HUD, glassmorphism overlays, touch D-Pad controls |
 | **Storage & Persistence**| **Web Storage API** | *Native* | High score persistence via `localStorage` |
 | **Deployment & CI/CD** | **GitHub Actions & Pages** | `v4` | Automated deployment workflow to GitHub Pages on push to `main` |
 
@@ -248,7 +248,7 @@ The project is hosted on GitHub Pages:
 ## ⚡ Performance & Optimizations
 
 * **Shared Asset Pools:** Reuses pre-allocated materials and geometries across all rendered entities to avoid runtime allocations.
-* **Shadow Map Frustum Optimization:** Tight `DirectionalLight` orthographic bounding box ($15 \times 15$ units) combined with high-resolution shadow mapping ($2048 \times 2048$) delivers crisp shadows without wasted depth calculations.
+* **Shadow Map Frustum Optimization:** Compact `DirectionalLight` orthographic bounding box ($26 \times 26$ units) combined with $1024 \times 1024$ shadow mapping delivers crisp shadows with minimal GPU overhead.
 * **Off-Screen Culling:** Lanes falling behind the camera ($z < \text{camZ} - 12$) are pruned from the Three.js scene graph and garbage collected.
 * **Zero External HTTP Asset Latency:** Zero external 3D models (`.gltf`/`.obj`), textures (`.png`/`.jpg`), or audio clips (`.mp3`/`.wav`) are loaded. Initial page load completes in under $100\text{ ms}$.
 
