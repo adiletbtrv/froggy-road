@@ -80,6 +80,28 @@ function initGeoms() {
     G.headlightGlow = new THREE.PlaneGeometry(1, 0.6); // масштабируется для машины, лежит плоско на дороге
 }
 
+// Проверка принадлежности геометрии к пулу общих (shared) геометрий G{}
+function isSharedGeom(geom) {
+    if (!geom) return true;
+    for (const k in G) {
+        if (G[k] === geom) return true;
+    }
+    return false;
+}
+
+// Корректное освобождение памяти GPU при удалении полосы:
+// геометрии из пула G{} и материалы из M{} не трогаются,
+// а динамически созданные геометрии (деревья, камни, кузова машин и брёвен) диспозятся.
+function disposeLane(lane) {
+    if (!lane || !lane.grp) return;
+    lane.grp.traverse(obj => {
+        if (obj.isMesh && obj.geometry && !isSharedGeom(obj.geometry)) {
+            obj.geometry.dispose();
+        }
+    });
+    scene.remove(lane.grp);
+}
+
 // ============================================================
 //  ЛЯГУШКА
 // ============================================================
@@ -90,11 +112,15 @@ class Frog {
         this.alive = true; this.moving = false;
         this.prog = 0; this.driftX = 0;
         this.sx = 0; this.sz = 0;
+        this.prevFx = 0; this.prevFz = 0;
         this.idleT = 0;
         this.eyes = [];
         this.combo = 0;
         this.lastJumpTime = 0;
         this.onLog = false;
+        this.targetRotY = 0;
+        this.srcRotY = 0;
+        this.targetX = undefined;
         this._build();
         this.group.position.set(0, FROG_REST_Y, 0);
         scene.add(this.group);
@@ -140,24 +166,47 @@ class Frog {
 
     tryMove(dx, dz) {
         if (this.moving || !this.alive || gameState !== 'playing') return false;
-        // При движении вдоль бревна стартовая X берётся из текущей мировой позиции,
-        // чтобы анимация прыжка начиналась точно там, где стоит лягушка.
+
+        // Ориентация модели с учётом изометрического угла камеры (-X, -Z)
+        let targetRot = this.targetRotY;
+        if (dz > 0)       targetRot = 0;            // Вперёд (+Z)
+        else if (dz < 0)  targetRot = Math.PI;      // Назад (-Z)
+        else if (dx > 0)  targetRot = Math.PI / 2;  // Влево (+X)
+        else if (dx < 0)  targetRot = -Math.PI / 2; // Вправо (-X)
+        this.targetRotY = targetRot;
+        this.srcRotY = this.group.rotation.y;
+
+        const currentLane = lanes[this.gz];
+        const nextGz = this.gz + dz;
+        const destLane = lanes[nextGz];
+
+        // Расчёт целевой координаты X:
+        // Базой для расчёта ВСЕГДА служит сохранённая целочисленная клетка this.gx.
+        // Визуальная позиция с дрейфом (this.group.position.x) используется исключительно
+        // как стартовая точка анимации (this.sx), чтобы полностью исключить смещение колонок.
+        const targetGx = this.gx + dx;
+        const targetX = targetGx;
+
+        // Проверка границ игрового поля
+        if (targetGx < -HALF_W || targetGx > HALF_W) return false;
+
+        // Проверка препятствий (камни/деревья на траве) до изменения состояния
+        if (destLane && destLane.type === 'grass' && destLane.blocked.has(targetGx)) {
+            this.group.scale.set(1.06, 0.94, 1.06);
+            return false;
+        }
+
+        // Фиксация перемещения
         this.sx = this.group.position.x;
         this.sz = this.gz;
-        // После прыжка лягушка должна встать на целую клетку от текущей gx.
-        // Обновляем gx так, чтобы он совпадал с округлённой позицией + шаг.
-        this.gx = Math.round(this.group.position.x) + dx;
-        if (this.gx < -HALF_W || this.gx > HALF_W) return false;
-        const nz = this.gz + dz;
-        const tl = lanes[nz];
-        if (tl && tl.type === 'grass' && tl.blocked.has(this.gx)) return false;
-        this.gz = nz;
+        this.gx = targetGx;
+        this.targetX = targetX;
+        this.gz = nextGz;
         this.driftX = 0;
-        this.moving = true; this.prog = 0;
+        this.moving = true;
+        this.prog = 0;
 
-        // Система комбо — учитывается только при продвижении вперёд на новую клетку (gz > maxZ).
-        // Это исключает накрутку очков прыжками влево/вправо или назад/вперёд:
-        // нет продвижения по дистанции — нет комбо.
+        // Система комбо — только при продвижении вперёд на новую клетку (gz > maxZ)
         const isNewGround = this.gz > this.maxZ;
         const now = performance.now();
         if (isNewGround && now - this.lastJumpTime < 1000) {
@@ -165,7 +214,7 @@ class Frog {
         } else if (isNewGround) {
             this.combo = 1;
         } else {
-            this.combo = 0; // любой прыжок без продвижения сбрасывает серию комбо
+            this.combo = 0;
         }
         this.lastJumpTime = now;
 
@@ -175,28 +224,26 @@ class Frog {
             updScore();
             audio.playScore();
             if (this.combo > 1) {
-                score += 1; // фиксированный бонус за серию быстрых прыжков вперёд
+                score += 1;
                 updScore();
                 showCombo(this.combo);
             }
         }
 
         // Сбор грибов
-        const destLane = lanes[nz];
-        if (destLane && destLane.mushrooms && destLane.mushrooms.has(nx)) {
-            const mush = destLane.mushrooms.get(nx);
+        if (destLane && destLane.mushrooms && destLane.mushrooms.has(this.gx)) {
+            const mush = destLane.mushrooms.get(this.gx);
+            mush.traverse(obj => {
+                if (obj.isMesh && obj.geometry && !isSharedGeom(obj.geometry)) {
+                    obj.geometry.dispose();
+                }
+            });
             destLane.grp.remove(mush);
-            destLane.mushrooms.delete(nx);
+            destLane.mushrooms.delete(this.gx);
             score += 1;
             updScore();
             audio.playPickup();
         }
-
-        // Ориентация модели с учётом изометрического угла камеры (-X, -Z):
-        if (dz > 0)       this.group.rotation.y = 0;            // Вперёд (+Z)
-        else if (dz < 0)  this.group.rotation.y = Math.PI;      // Назад (-Z)
-        else if (dx > 0)  this.group.rotation.y = Math.PI / 2;  // Влево (+X)
-        else if (dx < 0)  this.group.rotation.y = -Math.PI / 2; // Вправо (-X)
 
         audio.playHop();
         return true;
@@ -204,14 +251,32 @@ class Frog {
 
     update(dt) {
         if (!this.alive) return;
+        this.prevFx = this.group.position.x;
+        this.prevFz = this.group.position.z;
         if (this.moving) {
             this.prog += dt / JUMP_DUR;
-            if (this.prog >= 1) { this.prog = 1; this.moving = false; }
+            if (this.prog >= 1) {
+                this.prog = 1;
+                this.moving = false;
+                // При завершении прыжка на сушу/дорогу гарантированно фиксируем X на сетке
+                const destLane = lanes[this.gz];
+                if (!destLane || destLane.type !== 'river') {
+                    this.group.position.x = this.gx;
+                    this.driftX = 0;
+                }
+            }
             const t = this.prog;
             // Ease-in-out квадратичная интерполяция
             const e = t < .5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
-            this.group.position.x = this.sx + (this.gx - this.sx) * e;
+            const destX = this.gx;
+            this.group.position.x = this.sx + (destX - this.sx) * e;
             this.group.position.z = this.sz + (this.gz - this.sz) * e;
+
+            // Плавный поворот модели в направлении прыжка по кратчайшей дуге
+            let rotDiff = this.targetRotY - this.srcRotY;
+            rotDiff = Math.atan2(Math.sin(rotDiff), Math.cos(rotDiff));
+            this.group.rotation.y = this.srcRotY + rotDiff * Math.min(1, t * 1.6);
+
             // Высота дуги прыжка: стартует и заканчивается на поверхности назначения
             const destLane = lanes[this.gz];
             const destY = (destLane && destLane.type === 'river') ? LOG_SURFACE_Y + FROG_REST_Y : FROG_REST_Y;
@@ -225,6 +290,12 @@ class Frog {
             this.group.scale.x += (1 - this.group.scale.x) * .15;
             this.group.scale.y += (1 - this.group.scale.y) * .15;
             this.group.scale.z += (1 - this.group.scale.z) * .15;
+
+            // Плавный доворот к целевому углу
+            let rotDiff = this.targetRotY - this.group.rotation.y;
+            rotDiff = Math.atan2(Math.sin(rotDiff), Math.cos(rotDiff));
+            this.group.rotation.y += rotDiff * .25;
+
             const lane = lanes[this.gz];
             if (lane && lane.type === 'river') {
                 let onLog = false;
@@ -243,7 +314,10 @@ class Frog {
                 this.group.position.y = LOG_SURFACE_Y + FROG_REST_Y
                     + Math.sin(this.idleT * 2.5) * .008;
             } else {
-                this.group.position.x += (this.gx - this.group.position.x) * .18;
+                this.targetX = undefined;
+                this.driftX = 0;
+                // На суше/дороге лягушка стоит строго на сетке (x = this.gx) без остаточного дрейфа
+                this.group.position.x = this.gx;
                 this.group.position.z = this.gz;
                 this.group.position.y = FROG_REST_Y + Math.sin(this.idleT * 3) * .012;
             }
@@ -258,7 +332,22 @@ class Frog {
     }
 
     setEyeGlow(v) { this.eyes.forEach(e => { e.material.emissive.setRGB(v, v, v * .8); }); }
-    destroy() { scene.remove(this.group); scene.remove(blobShadow); }
+    destroy() {
+        if (this.group) {
+            this.group.traverse(obj => {
+                if (obj.isMesh && obj.geometry && !isSharedGeom(obj.geometry)) {
+                    obj.geometry.dispose();
+                }
+            });
+            scene.remove(this.group);
+        }
+        if (blobShadow) {
+            scene.remove(blobShadow);
+            if (blobShadow.geometry) blobShadow.geometry.dispose();
+            if (blobShadow.material) blobShadow.material.dispose();
+            blobShadow = null;
+        }
+    }
 }
 
 // ============================================================
@@ -349,7 +438,7 @@ function buildCar(lane, x) {
 
     g.position.set(x, 0, 0);
     lane.grp.add(g);
-    return { mesh: g, x, hw: tp.l / 2, baseY: 0 };
+    return { mesh: g, x, prevX: x, hw: tp.l / 2, baseY: 0 };
 }
 
 function buildLog(lane, x, len) {
@@ -367,7 +456,7 @@ function buildLog(lane, x, len) {
     // Группа смещена так, чтобы верхняя грань была на высоте LOG_SURFACE_Y (0.16)
     g.position.set(x, LOG_SURFACE_Y - 0.12, 0);
     lane.grp.add(g);
-    return { mesh: g, x, hw: len / 2, baseY: LOG_SURFACE_Y - 0.12 };
+    return { mesh: g, x, prevX: x, hw: len / 2, baseY: LOG_SURFACE_Y - 0.12 };
 }
 
 // ============================================================
@@ -480,7 +569,10 @@ function cleanLanes() {
     const minZ = camZ - VIEW_BEHIND - 5;
     for (const k in lanes) {
         const z = parseInt(k);
-        if (z < minZ) { scene.remove(lanes[z].grp); delete lanes[z]; }
+        if (z < minZ) {
+            disposeLane(lanes[z]);
+            delete lanes[z];
+        }
     }
 }
 
@@ -488,15 +580,43 @@ function cleanLanes() {
 //  ПРОВЕРКА КОЛЛИЗИЙ
 // ============================================================
 function checkCollisions() {
-    if (!frog.alive || frog.moving) return;
+    if (!frog.alive) return;
     const fx = frog.group.position.x;
-    const cl = lanes[frog.gz];
+    const prevFx = (frog.prevFx !== undefined) ? frog.prevFx : fx;
 
-    if (cl && cl.type === 'road') {
-        for (const c of cl.cars) {
-            if (Math.abs(fx - c.x) < c.hw + .2) { die('car'); return; }
+    // Непрерывный интервал X, который лягушка занимала за кадр
+    const frogMinX = Math.min(prevFx, fx) - 0.22;
+    const frogMaxX = Math.max(prevFx, fx) + 0.22;
+
+    // Определение активной полосы для проверки коллизий:
+    // В покое или при боковом прыжке (sz === gz) активна текущая полоса gz.
+    // При прыжке между полосами (dz !== 0):
+    // - До середины прыжка (prog < 0.5) лягушка ещё в исходной полосе sz;
+    // - На пике анимации и во второй половине (prog >= 0.5) лягушка уже перешла
+    //   в целевую полосу gz. Смерть засчитывается только от машины в ЦЕЛЕВОЙ полосе,
+    //   а машина из покинутой полосы sz больше не может ложно убить персонажа.
+    const activeZ = (frog.moving && frog.sz !== frog.gz)
+        ? (frog.prog < 0.5 ? frog.sz : frog.gz)
+        : frog.gz;
+
+    const road = lanes[activeZ];
+    if (road && road.type === 'road') {
+        for (const c of road.cars) {
+            const carPrev = (c.prevX !== undefined) ? c.prevX : c.x;
+            const carMinX = Math.min(carPrev, c.x) - c.hw;
+            const carMaxX = Math.max(carPrev, c.x) + c.hw;
+
+            // Непрерывная проверка пересечения двух отрезков в 1D (CCD)
+            if (frogMinX <= carMaxX && carMinX <= frogMaxX) {
+                die('car');
+                return;
+            }
         }
     }
+
+    if (frog.moving) return;
+
+    const cl = lanes[frog.gz];
     if (cl && cl.type === 'river') {
         let onLog = false;
         for (const lg of cl.logs) {
@@ -521,10 +641,44 @@ function updateCam() {
 }
 function updateFrustum() {
     const asp = window.innerWidth / window.innerHeight;
-    let w, h;
-    if (asp > MIN_VIEW_W / MIN_VIEW_H) { h = MIN_VIEW_H / 2; w = h * asp; } 
-    else { w = MIN_VIEW_W / 2; h = w / asp; }
-    camera.left = -w; camera.right = w; camera.top = h; camera.bottom = -h;
+    
+    // Адаптив в стиле Crossy Road:
+    // На мобильных (портрет) масштаб игрового поля шириной GRID_W остаётся стабильным,
+    // сцена не улетает в зум-аут, а персонаж расположен в нижней трети экрана,
+    // открывая игроку широкий обзор дороги и препятствий впереди.
+    let w, totalH;
+    if (asp < 1.0) {
+        // Портретный экран (смартфоны, планшеты в портрете):
+        // Задаём базовую ширину поля под сетку GRID_W (13) с полями
+        const targetW = 14.4;
+        w = targetW / 2;
+        totalH = targetW / asp;
+        
+        // Клампинг максимальной высоты для сверхвытянутых экранов (20:9 и уже)
+        const maxH = 26.0;
+        if (totalH > maxH) {
+            totalH = maxH;
+            w = (totalH * asp) / 2;
+        }
+        
+        // Персонаж смещён в нижнюю треть (30% от низа), 70% уходит вперёд
+        const bottomRatio = 0.30;
+        camera.bottom = -totalH * bottomRatio;
+        camera.top = totalH * (1 - bottomRatio);
+        camera.left = -w;
+        camera.right = w;
+    } else {
+        // Альбомный экран (десктопы, ноутбуки, ландшафтные планшеты):
+        // Высота сцены стабильна, персонаж комфортно центрирован с лёгким запасом вперёд
+        totalH = 13.5;
+        w = (totalH * asp) / 2;
+        const bottomRatio = 0.40;
+        camera.bottom = -totalH * bottomRatio;
+        camera.top = totalH * (1 - bottomRatio);
+        camera.left = -w;
+        camera.right = w;
+    }
+    
     camera.updateProjectionMatrix();
 }
 
@@ -541,7 +695,25 @@ const dayKF = [
     { t:1.00, sky:0x87CEEB, fog:0x87CEEB, fogN:20, fogF:44, ambC:0xffffff, ambI:.5, dirC:0xffffff, dirI:.85, star:0 }
 ];
 
-function lerpC(a, b, f) { return new THREE.Color(a).lerp(new THREE.Color(b), f); }
+// Кэшированные THREE.Color для ключевых кадров, чтобы не создавать их в hot-path
+dayKF.forEach(kf => {
+    kf._skyColor = new THREE.Color(kf.sky);
+    kf._fogColor = new THREE.Color(kf.fog);
+    kf._ambColor = new THREE.Color(kf.ambC);
+    kf._dirColor = new THREE.Color(kf.dirC);
+});
+
+// Единый переиспользуемый объект значений дня/ночи — ноль аллокаций каждый кадр
+const _dayVals = {
+    sky: new THREE.Color(),
+    fog: new THREE.Color(),
+    fogN: 20, fogF: 44,
+    ambC: new THREE.Color(), ambI: .5,
+    dirC: new THREE.Color(), dirI: .85,
+    star: 0
+};
+const _dangerColor = new THREE.Color(0xFF3333);
+
 function getDayVals(t) {
     t = ((t % 1) + 1) % 1;
     let i = 0;
@@ -550,13 +722,18 @@ function getDayVals(t) {
     }
     const a = dayKF[i], b = dayKF[i + 1];
     const f = (b.t - a.t) > 0 ? (t - a.t) / (b.t - a.t) : 0;
-    return {
-        sky: lerpC(a.sky, b.sky, f), fog: lerpC(a.fog, b.fog, f),
-        fogN: a.fogN + (b.fogN - a.fogN) * f, fogF: a.fogF + (b.fogF - a.fogF) * f,
-        ambC: lerpC(a.ambC, b.ambC, f), ambI: a.ambI + (b.ambI - a.ambI) * f,
-        dirC: lerpC(a.dirC, b.dirC, f), dirI: a.dirI + (b.dirI - a.dirI) * f,
-        star: a.star + (b.star - a.star) * f
-    };
+
+    _dayVals.sky.copy(a._skyColor).lerp(b._skyColor, f);
+    _dayVals.fog.copy(a._fogColor).lerp(b._fogColor, f);
+    _dayVals.fogN = a.fogN + (b.fogN - a.fogN) * f;
+    _dayVals.fogF = a.fogF + (b.fogF - a.fogF) * f;
+    _dayVals.ambC.copy(a._ambColor).lerp(b._ambColor, f);
+    _dayVals.ambI = a.ambI + (b.ambI - a.ambI) * f;
+    _dayVals.dirC.copy(a._dirColor).lerp(b._dirColor, f);
+    _dayVals.dirI = a.dirI + (b.dirI - a.dirI) * f;
+    _dayVals.star = a.star + (b.star - a.star) * f;
+
+    return _dayVals;
 }
 
 function updateDayNight(dt) {
@@ -566,8 +743,10 @@ function updateDayNight(dt) {
     // Опасная зона (прогрессивная сложность)
     const diff = frog ? difficulty(frog.gz) : 0;
     const danger = Math.max(0, (diff - 0.6) / 0.4);
-    v.sky.lerp(new THREE.Color(0xFF3333), danger * 0.15);
-    v.fog.lerp(new THREE.Color(0xFF3333), danger * 0.15);
+    if (danger > 0) {
+        v.sky.lerp(_dangerColor, danger * 0.15);
+        v.fog.lerp(_dangerColor, danger * 0.15);
+    }
 
     scene.background.copy(v.sky);
     scene.fog.color.copy(v.fog);
@@ -609,7 +788,16 @@ function die(cause) {
     if (cause === 'water') audio.playSplash(); else audio.playHit();
     audio.stopMusic();
     if (navigator.vibrate) navigator.vibrate(200); // Тактильный отклик (вибрация)
-    deathAnim = { type: cause === 'water' ? 'sink' : 'flat', p: 0, d: cause === 'water' ? .45 : .3 };
+
+    const lane = lanes[frog.gz];
+    const surfaceY = (lane && lane.type === 'river') ? LOG_SURFACE_Y : 0;
+    deathAnim = {
+        type: cause === 'water' ? 'sink' : 'flat',
+        p: 0,
+        d: cause === 'water' ? .45 : .3,
+        startY: frog.group.position.y,
+        surfaceY: surfaceY
+    };
     
     if (score > highScore) {
         highScore = score;
@@ -624,7 +812,10 @@ function die(cause) {
 }
 
 function restart() {
-    for (const k in lanes) { scene.remove(lanes[k].grp); delete lanes[k]; }
+    for (const k in lanes) {
+        disposeLane(lanes[k]);
+        delete lanes[k];
+    }
     frog.destroy();
     score = 0; maxGen = -10; camZ = 0; deathAnim = null; gameState = 'playing';
     cycleTime = 0;
@@ -638,6 +829,7 @@ function restart() {
 function startGame() {
     gameState = 'playing';
     document.getElementById('main-menu').classList.remove('show');
+    const h = document.getElementById('hint'); if (h) h.style.opacity = '0';
     if (!audio.ctx) audio.init();
     audio.startMusic();
 }
@@ -663,8 +855,14 @@ function setupInput() {
 
     document.addEventListener('keydown', e => {
         initAudio(); 
-        const h = document.getElementById('hint'); if (h) h.style.opacity = '0';
+        if (e.key === ' ' || e.key === 'Enter') {
+            e.preventDefault();
+            if (gameState === 'menu') { startGame(); return; }
+            if (gameState === 'gameover') { restart(); return; }
+            return;
+        }
         if (gameState !== 'playing') return;
+        const h = document.getElementById('hint'); if (h) h.style.opacity = '0';
         // Преобразование осей с учётом ракурса камеры (-X, -Z)
         switch (e.key) {
             case 'ArrowUp':    case 'w': case 'W': frog.tryMove(0, 1);  e.preventDefault(); break;
@@ -689,7 +887,11 @@ function setupInput() {
 
     // Управление свайпами
     let tx = 0, ty = 0;
-    document.addEventListener('touchstart', e => { tx = e.touches[0].clientX; ty = e.touches[0].clientY; }, { passive: true });
+    document.addEventListener('touchstart', e => {
+        initAudio();
+        tx = e.touches[0].clientX;
+        ty = e.touches[0].clientY;
+    }, { passive: true });
     document.addEventListener('touchend', e => {
         initAudio();
         if (gameState !== 'playing') return;
@@ -704,7 +906,15 @@ function setupInput() {
         if (!isTouchDevice) { isTouchDevice = true; document.getElementById('dpad').classList.add('show'); }
     }, { once: true, passive: true });
 
-    window.addEventListener('resize', () => { updateFrustum(); renderer.setSize(window.innerWidth, window.innerHeight); });
+    let resizeRaf = null;
+    window.addEventListener('resize', () => {
+        if (resizeRaf) cancelAnimationFrame(resizeRaf);
+        resizeRaf = requestAnimationFrame(() => {
+            updateFrustum();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            resizeRaf = null;
+        });
+    });
 }
 
 // ============================================================
@@ -731,9 +941,15 @@ function updateLanes(dt) {
         const l = lanes[k];
         if (l.type === 'road') {
             for (const c of l.cars) {
+                c.prevX = c.x;
                 c.x += l.spd * l.dir * dt;
-                if (l.dir > 0 && c.x > wMax + c.hw) c.x = wMin - c.hw;
-                else if (l.dir < 0 && c.x < wMin - c.hw) c.x = wMax + c.hw;
+                if (l.dir > 0 && c.x > wMax + c.hw) {
+                    c.x = wMin - c.hw;
+                    c.prevX = c.x; // Сброс prevX при телепортации через край экрана
+                } else if (l.dir < 0 && c.x < wMin - c.hw) {
+                    c.x = wMax + c.hw;
+                    c.prevX = c.x; // Сброс prevX при телепортации через край экрана
+                }
                 c.mesh.position.x = c.x;
                 applyEdgeFade(c, c.x, c.hw, wMin, wMax);
             }
@@ -741,9 +957,15 @@ function updateLanes(dt) {
         if (l.type === 'river') {
             if (l.ground) l.ground.position.y = -.03 + Math.sin(performance.now() * .0015 + l.z * .7) * .008;
             for (const lg of l.logs) {
+                lg.prevX = lg.x;
                 lg.x += l.spd * l.dir * dt;
-                if (l.dir > 0 && lg.x > wMax + lg.hw) lg.x = wMin - lg.hw;
-                else if (l.dir < 0 && lg.x < wMin - lg.hw) lg.x = wMax + lg.hw;
+                if (l.dir > 0 && lg.x > wMax + lg.hw) {
+                    lg.x = wMin - lg.hw;
+                    lg.prevX = lg.x;
+                } else if (l.dir < 0 && lg.x < wMin - lg.hw) {
+                    lg.x = wMax + lg.hw;
+                    lg.prevX = lg.x;
+                }
                 lg.mesh.position.x = lg.x;
                 applyEdgeFade(lg, lg.x, lg.hw, wMin, wMax);
             }
@@ -768,10 +990,19 @@ function animate() {
             deathAnim.p += dt / deathAnim.d;
             const t = Math.min(deathAnim.p, 1);
             if (deathAnim.type === 'flat') {
-                frog.group.scale.set(1 + t * .6, Math.max(.08, 1 - t * .85), 1 + t * .6);
+                const sy = Math.max(.04, 1 - t * .92);
+                frog.group.scale.set(1 + t * .65, sy, 1 + t * .65);
+                // Прижимаем сплющенную модель точно к плоскости поверхности (дорога или бревно)
+                frog.group.position.y = deathAnim.surfaceY + 0.17 * sy;
+                if (blobShadow) {
+                    blobShadow.scale.set(1 + t * .65, 1 + t * .65, 1);
+                }
             } else {
-                frog.group.position.y = FROG_REST_Y - t * .55;
+                frog.group.position.y = deathAnim.startY - t * .55;
                 frog.group.scale.set(1 - t * .35, 1 - t * .35, 1 - t * .35);
+                if (blobShadow) {
+                    blobShadow.material.opacity = Math.max(0, 0.3 * (1 - t * 1.5));
+                }
             }
             if (t >= 1) deathAnim = null;
         }
