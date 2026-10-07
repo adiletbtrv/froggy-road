@@ -151,6 +151,9 @@ class AudioManager {
 
         const schedulerLoop = () => {
             if (!this.ctx) return;
+            if (this.nextNoteTime < this.ctx.currentTime) {
+                this.nextNoteTime = this.ctx.currentTime + 0.05;
+            }
             while (this.nextNoteTime < this.ctx.currentTime + 0.2) {
                 sched(melody[this.currentStep % melody.length], 'square', this.musicGain);
                 sched(bass[this.currentStep % bass.length], 'triangle', this.musicGain);
